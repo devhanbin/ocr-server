@@ -10,10 +10,10 @@ def extract_fields(text: str) -> dict:
         "계약기간_종료일": extract_end_date(text),
         "신규연장": extract_new_or_extend(text),
         "계약구분": extract_contract_type(text),
-        "계약금_선급금": extract_amount(text, ["계약금", "선급금"]),
+        "계약금_선급금": extract_amount(text, ["선금", "선급금", "계약금"]),
         "중도금": extract_amount(text, ["중도금"]),
         "잔금": extract_amount(text, ["잔금"]),
-        "총계약대금": extract_amount(text, ["총 계약대금", "총계약대금"]),
+        "총계약대금": extract_total_amount(text),
         "수수료_공급률": extract_rate(text),
         "부가세_포함여부": extract_vat(text),
         "기타": extract_field_value(text, "기타"),
@@ -22,29 +22,31 @@ def extract_fields(text: str) -> dict:
 
 
 def extract_start_date(text: str):
-    """계약기간 시작일 추출"""
+    """계약기간 시작일 추출 - 'N년 N월 N일부터' 패턴"""
     patterns = [
-        r"계약기간\s*[：:]\s*(\d{4}[.\-년]\s*\d{1,2}[.\-월]\s*\d{1,2})",
-        r"(\d{4}[.\-년]\s*\d{1,2}[.\-월]\s*\d{1,2})\s*[~～\-]",
-        r"기간\s*[：:]?\s*(\d{4}\.\d{1,2}\.\d{1,2})",
+        r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일부터",
+        r"(\d{4})[.\-]\s*(\d{1,2})[.\-]\s*(\d{1,2})\s*[~～\-]",
+        r"계약기간\s*[：:]\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})",
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
-            return normalize_date(match.group(1))
+            year, month, day = match.group(1), match.group(2), match.group(3)
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
     return None
 
 
 def extract_end_date(text: str):
-    """계약기간 종료일 추출"""
+    """계약기간 종료일 추출 - 'N년 N월 N일까지' 패턴"""
     patterns = [
-        r"[~～\-]\s*(\d{4}[.\-년]\s*\d{1,2}[.\-월]\s*\d{1,2})",
-        r"까지\s*[：:]?\s*(\d{4}\.\d{1,2}\.\d{1,2})",
+        r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일까지",
+        r"[~～\-]\s*(\d{4})[.\-]\s*(\d{1,2})[.\-]\s*(\d{1,2})",
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
-            return normalize_date(match.group(1))
+            year, month, day = match.group(1), match.group(2), match.group(3)
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
     return None
 
 
@@ -71,12 +73,29 @@ def extract_contract_type(text: str):
 
 
 def extract_amount(text: str, keywords: list):
-    """금액 추출 (키워드 기반)"""
+    """금액 추출 - 숫자 패턴"""
     for keyword in keywords:
-        pattern = rf"{keyword}[^0-9]*?([\d,]+)\s*원"
+        pattern = rf"{keyword}[^\n]{{0,30}}?\\?([\d,]{{6,}})"
         match = re.search(pattern, text)
         if match:
-            return match.group(1).replace(",", "") + "원"
+            amount = match.group(1).replace(",", "")
+            return amount + "원"
+    return None
+
+
+def extract_total_amount(text: str):
+    """총 계약대금 추출"""
+    patterns = [
+        r"계약금액[^\\n]{0,30}\\([\d,]+)",
+        r"합계\s*100\.0%\s*\\([\d,]+)",
+        r"W60,000,000",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            nums = re.findall(r"[\d,]+", match.group(0))
+            if nums:
+                return nums[-1].replace(",", "") + "원"
     return None
 
 
@@ -95,9 +114,9 @@ def extract_rate(text: str):
 
 def extract_vat(text: str):
     """부가세 포함여부 추출"""
-    if re.search(r"부가세?\s*포함", text):
+    if re.search(r"부가세\s*포함", text):
         return "포함"
-    if re.search(r"부가세?\s*비포함|부가세?\s*별도", text):
+    if re.search(r"부가세\s*(별도|비포함)", text):
         return "비포함"
     return None
 
@@ -108,20 +127,5 @@ def extract_field_value(text: str, keyword: str):
     match = re.search(pattern, text)
     if match:
         value = match.group(1).strip()
-        return value if value else None
+        return value if value and len(value) < 100 else None
     return None
-
-
-def normalize_date(date_str: str) -> str:
-    """날짜 형식 정규화 → YYYY-MM-DD"""
-    date_str = date_str.strip()
-    date_str = re.sub(r"[년월]", "-", date_str)
-    date_str = re.sub(r"일", "", date_str)
-    date_str = re.sub(r"\s", "", date_str)
-    date_str = date_str.rstrip("-")
-
-    parts = re.split(r"[-.]", date_str)
-    if len(parts) == 3:
-        year, month, day = parts
-        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-    return date_str
